@@ -57,9 +57,9 @@ HEADER_H = 62
 @dataclass
 class Event:
     title: str
-    days: list[int]  # Mon=0 ... Sun=6
-    start: int       # minutes from midnight
-    end: int         # == start for a point-in-time event ("8:00 Wake up")
+    day: date
+    start: int  # minutes from midnight
+    end: int    # == start for a point-in-time event ("8:00 Wake up")
 
     @property
     def is_point(self) -> bool:
@@ -102,18 +102,18 @@ class _Slot:
 # Public API
 # ---------------------------------------------------------------------------
 
-def render_week(events: list[Event], week_start: date, today: date, brand: str,
+def render_week(events: list[Event], first_day: date, today: date, brand: str,
                 generated_at: datetime) -> bytes:
+    """Seven days starting from first_day (not necessarily a Monday)."""
     width, height = landscape(A4)
     buf = BytesIO()
     c = Canvas(buf, pagesize=(width, height))
     c.setTitle("Weekly schedule")
     c.setAuthor(brand)
 
-    week_end = week_start + timedelta(days=6)
-    occurrences = [(e, d) for e in events for d in e.days]
-    _header(c, width, height, "Weekly schedule", _range_label(week_start, week_end),
-            _summary(occurrences))
+    days = [first_day + timedelta(days=i) for i in range(7)]
+    events = [e for e in events if e.day in days]
+    _header(c, width, height, "Weekly schedule", _range_label(days[0], days[-1]), _summary(events))
 
     col_head = 34
     left, right = MARGIN + GUTTER, width - MARGIN
@@ -124,8 +124,7 @@ def render_week(events: list[Event], week_start: date, today: date, brand: str,
         **_hour_range(events),
     )
 
-    for i in range(7):
-        day = week_start + timedelta(days=i)
+    for i, day in enumerate(days):
         x = left + i * col_w
         is_today = day == today
         if is_today:
@@ -133,7 +132,7 @@ def render_week(events: list[Event], week_start: date, today: date, brand: str,
             c.rect(x, tl.bottom, col_w, tl.top - tl.bottom + col_head, stroke=0, fill=1)
         c.setFillColor(ACCENT if is_today else INK)
         c.setFont(BOLD, 10.5)
-        c.drawString(x + 6, tl.top + col_head - 15, DAY_NAMES[i])
+        c.drawString(x + 6, tl.top + col_head - 15, DAY_NAMES[day.weekday()])
         c.setFillColor(ACCENT if is_today else MUTED)
         c.setFont(REGULAR, 8.5)
         label = f"{day.day} {MONTH_NAMES[day.month - 1][:3]}" + ("  ·  today" if is_today else "")
@@ -147,8 +146,8 @@ def render_week(events: list[Event], week_start: date, today: date, brand: str,
         c.line(x, tl.bottom, x, tl.top + col_head)
 
     colors = _assign_colors(events)
-    for i in range(7):
-        day_events = [e for e in events if i in e.days]
+    for i, day in enumerate(days):
+        day_events = [e for e in events if e.day == day]
         for slot in _layout(day_events, tl, min_h=15, point_h=13):
             lane_w = col_w / slot.lanes
             x = left + i * col_w + slot.lane * lane_w + 2
@@ -170,14 +169,14 @@ def render_day(events: list[Event], day: date, today: date, brand: str,
     c.setTitle(f"{DAY_NAMES[weekday]} schedule")
     c.setAuthor(brand)
 
-    day_events = [e for e in events if weekday in e.days]
+    day_events = [e for e in events if e.day == day]
     subtitle = f"{day.day} {MONTH_NAMES[day.month - 1]} {day.year}"
     if day == today:
         subtitle += "  ·  Today"
     elif day == today + timedelta(days=1):
         subtitle += "  ·  Tomorrow"
     _header(c, width, height, DAY_NAMES[weekday], subtitle,
-            _summary([(e, weekday) for e in day_events]))
+            _summary(day_events))
 
     left, right = MARGIN + GUTTER + 4, width - MARGIN
     tl = _Timeline(
@@ -267,7 +266,7 @@ def _layout(events: list[Event], tl: _Timeline, min_h: float, point_h: float) ->
 
 def _assign_colors(events: list[Event]) -> dict:
     colors = {}
-    for e in sorted(events, key=lambda e: (min(e.days), e.start)):
+    for e in sorted(events, key=lambda e: (e.day, e.start)):
         colors.setdefault(_key(e), PALETTE[len(colors) % len(PALETTE)])
     return colors
 
@@ -444,11 +443,11 @@ def _duration(minutes: int) -> str:
     return f"{h} h" if h else f"{m} min"
 
 
-def _summary(occurrences: list[tuple[Event, int]]) -> str:
-    count = len(occurrences)
+def _summary(events: list[Event]) -> str:
+    count = len(events)
     if not count:
         return "No events"
-    busy = sum(e.stop - e.start for e, _ in occurrences)
+    busy = sum(e.stop - e.start for e in events)
     text = f"{count} event{'s' if count != 1 else ''}"
     return text + (f"  ·  {_duration(busy)} planned" if busy else "")
 
