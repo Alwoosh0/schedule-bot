@@ -1,0 +1,2 @@
+python-telegram-bot[job-queue]==21.6
+tzdata>=2024.1
